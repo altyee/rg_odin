@@ -1,0 +1,60 @@
+package d3d12ma
+
+import "core:testing"
+import "core:log"
+import win "core:sys/windows"
+import d3d12 "vendor:directx/d3d12"
+
+// Test size and alignment layouts to ensure they mirror C++ structures exactly
+@test
+test_struct_sizes :: proc(t: ^testing.T) {
+	log.info("Verifying layout structure sizes...")
+
+	// Test basic structures
+	testing.expect_value(t, size_of(Allocation_Callbacks), size_of(rawptr) * 3)
+	testing.expect_value(t, size_of(ALLOCATOR_DESC), 32) // Flags(4) + pDevice(8) + BlockSize(8) + pCallbacks(8) + pAdapter(8) with alignment padding
+	testing.expect_value(t, size_of(ALLOCATION_DESC), 32) // Flags(4) + HeapType(4) + ExtraFlags(4) + Pool(8) + PrivateData(8) with alignment padding
+}
+
+// Test flag and bit_set underlying sizes for safe FFI boundaries
+@test
+test_bit_set_sizes :: proc(t: ^testing.T) {
+	log.info("Verifying bit_set FFI sizes...")
+
+	testing.expect_value(t, size_of(Allocator_Flags), size_of(win.UINT))
+	testing.expect_value(t, size_of(Allocation_Flags), size_of(win.UINT))
+	testing.expect_value(t, size_of(Pool_Flags), size_of(win.UINT))
+	testing.expect_value(t, size_of(Defragmentation_Flags), size_of(win.UINT))
+}
+
+// Test the execution flow with null/mock pointers to verify no panic during linkage evaluation
+@test
+test_invalid_allocator_creation_returns_error :: proc(t: ^testing.T) {
+	log.info("Verifying foreign linkage error handling behavior...")
+
+	// An empty/null descriptor should fail gracefully via HRESULT rather than crashing Odin
+	desc: ALLOCATOR_DESC
+	desc.Flags = {}
+	desc.pDevice = nil // Passing null intentionally to check foreign linkage execution
+	desc.pAdapter = nil
+
+	allocator: Allocator = nil
+
+	// D3D12MA_CreateAllocator should safely return E_INVALIDARG or E_NOINTERFACE if the device is null
+	hr := CreateAllocator(&desc, &allocator)
+
+	testing.expect(t, hr != win.S_OK, "Expected CreateAllocator to fail with null D3D12 Device context")
+	testing.expect_value(t, allocator, nil)
+}
+
+// Simple test targeting local structure flag bit manipulation
+@test
+test_flag_bit_set_manipulation :: proc(t: ^testing.T) {
+	log.info("Testing flag manipulations...")
+
+	flags: Allocator_Flags = {.SINGLETHREADED, .ALWAYS_COMMITTED}
+
+	testing.expect(t, .SINGLETHREADED in flags, "Expected SINGLETHREADED flag to be present")
+	testing.expect(t, .ALWAYS_COMMITTED in flags, "Expected ALWAYS_COMMITTED flag to be present")
+	testing.expect(t, !(.MSAA_TEXTURES_ALWAYS_COMMITTED in flags), "Did not expect unassigned flag to be present")
+}

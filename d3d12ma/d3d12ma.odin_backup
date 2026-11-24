@@ -1,0 +1,167 @@
+package d3d12ma
+
+import win "core:sys/windows"
+import d3d12 "vendor:directx/d3d12"
+
+// ---------------------------------------------------------------------------
+// 1. Library Import
+// ---------------------------------------------------------------------------
+// Odin resolves this path relative to the location of this source file.
+foreign import d3d12ma_lib {
+	"lib/d3d12ma.lib",
+}
+
+// ---------------------------------------------------------------------------
+// 2. Opaque Handle Handles (representing C++ instances safely as raw pointers)
+// ---------------------------------------------------------------------------
+Allocator            :: distinct rawptr
+Allocation           :: distinct rawptr
+Pool                 :: distinct rawptr
+DefragmentationContext :: distinct rawptr
+VirtualBlock         :: distinct rawptr
+
+// ---------------------------------------------------------------------------
+// 3. Enums and Bit Sets (Idiomatic Odin Translations)
+// ---------------------------------------------------------------------------
+Allocator_Flags :: bit_set[Allocator_Flag; win.UINT]
+Allocator_Flag  :: enum win.UINT {
+	SINGLETHREADED                      = 0, // Maps to 0x1
+	ALWAYS_COMMITTED                    = 1, // Maps to 0x2
+	DEFAULT_POOLS_NOT_ZEROED            = 2, // Maps to 0x4
+	MSAA_TEXTURES_ALWAYS_COMMITTED     = 3, // Maps to 0x8
+	DONT_PREFER_SMALL_BUFFERS_COMMITTED = 4, // Maps to 0x10
+	DONT_USE_TIGHT_ALIGNMENT            = 5, // Maps to 0x20
+}
+
+Allocation_Flags :: bit_set[Allocation_Flag; win.UINT]
+Allocation_Flag  :: enum win.UINT {
+	COMMITTED           = 0,  // Maps to 0x1
+	NEVER_ALLOCATE      = 1,  // Maps to 0x2
+	WITHIN_BUDGET       = 2,  // Maps to 0x4
+	UPPER_ADDRESS       = 3,  // Maps to 0x8
+	CAN_ALIAS           = 4,  // Maps to 0x10
+	STRATEGY_MIN_MEMORY = 16, // Maps to 0x00010000
+	STRATEGY_MIN_TIME   = 17, // Maps to 0x00020000
+	STRATEGY_MIN_OFFSET = 18, // Maps to 0x00040000
+}
+
+Pool_Flags :: bit_set[Pool_Flag; win.UINT]
+Pool_Flag  :: enum win.UINT {
+	ALGORITHM_LINEAR                 = 0, // Maps to 0x1
+	MSAA_TEXTURES_ALWAYS_COMMITTED  = 1, // Maps to 0x2
+	ALWAYS_COMMITTED                 = 2, // Maps to 0x4
+	DONT_USE_TIGHT_ALIGNMENT         = 3, // Maps to 0x8
+}
+
+Defragmentation_Flags :: bit_set[Defragmentation_Flag; win.UINT]
+Defragmentation_Flag  :: enum win.UINT {
+	ALGORITHM_FAST     = 0, // Maps to 0x1
+	ALGORITHM_BALANCED = 1, // Maps to 0x2
+	ALGORITHM_FULL     = 2, // Maps to 0x4
+}
+
+Defragmentation_Move_Operation :: enum win.UINT {
+	COPY    = 0,
+	IGNORE  = 1,
+	DESTROY = 2,
+}
+
+// ---------------------------------------------------------------------------
+// 4. Mirror Struct Layouts (Must perfectly align with C layouts)
+// ---------------------------------------------------------------------------
+Allocation_Callbacks :: struct {
+	pAllocate:    proc "c" (size: win.SIZE_T, alignment: win.SIZE_T, private_data: rawptr) -> rawptr,
+	pFree:        proc "c" (memory: rawptr, private_data: rawptr),
+	pPrivateData: rawptr,
+}
+
+ALLOCATOR_DESC :: struct {
+	Flags:                Allocator_Flags,
+	pDevice:              rawptr, // Pointer to your ID3D12Device
+	PreferredBlockSize:   win.UINT64,
+	pAllocationCallbacks: ^Allocation_Callbacks,
+	pAdapter:             rawptr, // Pointer to your IDXGIAdapter
+}
+
+ALLOCATION_DESC :: struct {
+	Flags:          Allocation_Flags,
+	HeapType:       d3d12.HEAP_TYPE,
+	ExtraHeapFlags: d3d12.HEAP_FLAGS,
+	CustomPool:     Pool,
+	pPrivateData:   rawptr,
+}
+
+POOL_DESC :: struct {
+	Flags:                  Pool_Flags,
+	HeapProperties:         d3d12.HEAP_PROPERTIES,
+	HeapFlags:              d3d12.HEAP_FLAGS,
+	BlockSize:              win.UINT64,
+	MinBlockCount:          win.UINT,
+	MaxBlockCount:          win.UINT,
+	MinAllocationAlignment: win.UINT64,
+	pProtectedSession:      rawptr, // Pointer to ID3D12ProtectedResourceSession
+	ResidencyPriority:      d3d12.RESIDENCY_PRIORITY,
+}
+
+DEFRAGMENTATION_DESC :: struct {
+	Flags:                 Defragmentation_Flags,
+	MaxBytesPerPass:       win.UINT64,
+	MaxAllocationsPerPass: win.UINT32,
+}
+
+DEFRAGMENTATION_MOVE :: struct {
+	Operation:          Defragmentation_Move_Operation,
+	pSrcAllocation:     Allocation,
+	pDstTmpAllocation:  Allocation,
+}
+
+DEFRAGMENTATION_PASS_MOVE_INFO :: struct {
+	MoveCount: win.UINT32,
+	pMoves:    [^]DEFRAGMENTATION_MOVE, // Multi-pointer mapping to array
+}
+
+// ---------------------------------------------------------------------------
+// 5. Foreign Link Declarations
+// ---------------------------------------------------------------------------
+@(default_calling_convention="c")
+foreign d3d12ma_lib {
+	// Base Allocator Procedures
+	@(link_name="D3D12MA_CreateAllocator")
+	CreateAllocator :: proc(pDesc: ^ALLOCATOR_DESC, ppAllocator: ^Allocator) -> win.HRESULT ---
+
+	@(link_name="D3D12MA_Allocator_Release")
+	Allocator_Release :: proc(allocator: Allocator) -> win.ULONG ---
+
+	@(link_name="D3D12MA_Allocator_CreateResource")
+	CreateResource :: proc(
+		allocator:            Allocator,
+		pAllocDesc:           ^ALLOCATION_DESC,
+		pResourceDesc:        ^d3d12.RESOURCE_DESC,
+		InitialResourceState: d3d12.RESOURCE_STATES,
+		pOptimizedClearValue: ^d3d12.CLEAR_VALUE,
+		ppAllocation:         ^Allocation,
+		riidResource:         ^win.GUID,
+		ppvResource:          ^rawptr,
+	) -> win.HRESULT ---
+
+	@(link_name="D3D12MA_Allocator_AllocateMemory")
+	AllocateMemory :: proc(
+		allocator:    Allocator,
+		pAllocDesc:   ^ALLOCATION_DESC,
+		pAllocInfo:   ^d3d12.RESOURCE_ALLOCATION_INFO,
+		ppAllocation: ^Allocation,
+	) -> win.HRESULT ---
+
+	// Base Allocation Procedures
+	@(link_name="D3D12MA_Allocation_GetResource")
+	Allocation_GetResource :: proc(allocation: Allocation) -> rawptr --- // Returns ID3D12Resource
+
+	@(link_name="D3D12MA_Allocation_GetHeap")
+	Allocation_GetHeap :: proc(allocation: Allocation) -> rawptr --- // Returns ID3D12Heap
+
+	@(link_name="D3D12MA_Allocation_GetOffset")
+	Allocation_GetOffset :: proc(allocation: Allocation) -> win.UINT64 ---
+
+	@(link_name="D3D12MA_Allocation_Release")
+	Allocation_Release :: proc(allocation: Allocation) -> win.ULONG ---
+}
