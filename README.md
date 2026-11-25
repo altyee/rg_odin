@@ -16,12 +16,13 @@ Immediate WIP is to automatically insert fences between passes.
 ## DLLs
 Requires ```dxil.dll``` ```dxcompiler.dll``` ```SDL3.dll```. 
 
-## Usage 
+## Running the sample
 ```
 cd build
 # dlls should be here
 odin run ../rtsample
 ```
+Simple RT pipeline with NEE (Next-Event Estimation) and Reinhard tone-mapping.
 
 <img width="540" height="540" alt="cornell_box" src="https://github.com/user-attachments/assets/16df81a6-0b2f-46fe-b216-00f7b9dddd40" />
 
