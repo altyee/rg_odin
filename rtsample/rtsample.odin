@@ -46,7 +46,7 @@ copy_to_back_buffer :: proc(node: ^rg.RenderNode, graph: ^rg.RenderGraph, ctx: ^
 }
 
 init_rt_bindings :: proc(node: ^rg.RenderNode, ctx: ^rg.D3D12Context) {
-    node.root_signature = get_rs(ctx.device, 5) // TLAS, output, mesh colors, face normals, triangle offsets
+    node.root_signature = get_rs(ctx.device, 6) // TLAS, output, mesh colors, face normals, triangle offsets, lights
     dxil, compiled := dxc.dxc_compile_from_path("./shaders/rt.hlsl", "", "lib_6_6")
     if !compiled { panic("Failed to compile rt.hlsl") }
     node.pso, compiled = rg.create_rt_pso(ctx.device, dxil, node.root_signature)
@@ -56,13 +56,17 @@ init_rt_bindings :: proc(node: ^rg.RenderNode, ctx: ^rg.D3D12Context) {
 }
 
 execute_rt_pass :: proc(node: ^rg.RenderNode, graph: ^rg.RenderGraph, ctx: ^rg.D3D12Context) {
-    indices := [5]u32{
+    lights_srv := u32(0xffff_ffff)
+    if len(node.reads) > 4 {
+        lights_srv = graph.resources[node.reads[4]].srv_idx
+    }
+    indices := [6]u32{
         graph.resources[node.reads[0]].srv_idx,
         graph.resources[node.writes[0]].uav_idx,
         graph.resources[node.reads[1]].srv_idx,
         graph.resources[node.reads[2]].srv_idx,
         graph.resources[node.reads[3]].srv_idx,
-
+        lights_srv,
     }
     ctx.cmd_list->SetPipelineState1(node.pso)
     ctx.cmd_list->SetComputeRootSignature(node.root_signature)
@@ -133,6 +137,12 @@ main :: proc() {
     append(&rt_pass.reads, mesh_colors_resource)
     append(&rt_pass.reads, normals_resource)
     append(&rt_pass.reads, offsets_resource)
+    lights, lights_ok := gltf.create_light_triangle_buffer(&scene, ctx.allocator)
+    if !lights_ok { return }
+    if lights != nil {
+        lights_resource := rg.rg_add_resource(&graph, "light_triangles", lights, kind = .Buffer, element_stride = size_of(gltf.LightTriangle))
+        append(&rt_pass.reads, lights_resource)
+    }
 
     append(&rt_pass.writes, output_texture)
     rt_pass_id := len(graph.passes)
