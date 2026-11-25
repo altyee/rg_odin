@@ -215,6 +215,12 @@ extract_primitive :: proc(primitive: cgltf.primitive, world: matrix[4,4]f32) -> 
     mesh.normals = normals
 
     mesh.color = extract_material_color(primitive)
+    if material := primitive.material; material != nil {
+        mesh.emission = material.emissive_factor
+        if material.has_emissive_strength {
+            mesh.emission *= material.emissive_strength.emissive_strength
+        }
+    }
 
     return mesh, true
 }

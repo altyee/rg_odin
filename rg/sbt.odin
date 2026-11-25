@@ -60,8 +60,9 @@ create_shader_binding_table :: proc(
             DepthOrArraySize = 1, MipLevels = 1, Format = .UNKNOWN,
             SampleDesc = {Count = 1, Quality = 0}, Layout = .ROW_MAJOR,
         }
-        d3d12ma.Allocator_CreateResource(allocator, &alloc_desc, &desc, {.VERTEX_AND_CONSTANT_BUFFER}, nil,
-                                            &sbt_buffer, d3d12.IResource_UUID, nil)
+        hr = d3d12ma.Allocator_CreateResource(allocator, &alloc_desc, &desc, d3d12.RESOURCE_STATE_GENERIC_READ, nil,
+                                             &sbt_buffer, d3d12.IResource_UUID, nil)
+        if hr < 0 { return nil, {}, false }
     }
 
     sub_buffer_resc := d3d12ma.Allocation_GetD3D12Resource(sbt_buffer)

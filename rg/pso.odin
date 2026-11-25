@@ -40,7 +40,7 @@ create_rt_pso :: proc(
     }
 
     pipeline_config := d3d12.RAYTRACING_PIPELINE_CONFIG{
-        MaxTraceRecursionDepth = 1,
+        MaxTraceRecursionDepth = 2,
     }
 
     global_rs_desc := d3d12.GLOBAL_ROOT_SIGNATURE{

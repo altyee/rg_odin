@@ -61,15 +61,18 @@ rg_add_resource_by_desc :: proc(rg: ^RenderGraph, name: string, desc: d3d12.RESO
     return ResourceHandle(idx)
 }
 
-rg_add_resource_by_allocation :: proc(rg: ^RenderGraph, name: string, allocation: d3d12ma.Allocation) -> ResourceHandle {
+rg_add_resource_by_allocation :: proc(rg: ^RenderGraph, name: string, allocation: d3d12ma.Allocation, kind: ResourceKind = .Texture, element_stride: u32 = 0) -> ResourceHandle {
     node := ResourceNode {
 		name = name,
 		first_pass_id = INT_MAX,
 		last_pass_id = -1,
 		allocation = allocation,
+        kind = kind,
+        element_stride = element_stride,
 		srv_cpu_handle = d3d12.CPU_DESCRIPTOR_HANDLE { ptr = 0 },
 		uav_cpu_handle = d3d12.CPU_DESCRIPTOR_HANDLE { ptr = 0 },
 	}
+    d3d12ma.Allocation_GetD3D12Resource(allocation)->GetDesc(&node.desc)
 	append(&rg.resources, node)
     idx := len(rg.resources) - 1
     return ResourceHandle(idx)
@@ -98,9 +101,9 @@ rg_init :: proc(rg: ^RenderGraph, ctx: ^D3D12Context) {
 rg_compile :: proc(graph: ^RenderGraph, ctx: ^D3D12Context) -> bool {
 
     allocator := ctx.allocator
-    cmdlist := ctx.cmd_list
+
     device := ctx.device
-    descriptor_heap := ctx.descriptor_heap
+
 
 	num_nodes := len(graph.passes)
 	state_tracker := make([]DFS_State, num_nodes)
@@ -198,46 +201,56 @@ rg_compile :: proc(graph: ^RenderGraph, ctx: ^D3D12Context) -> bool {
         Type = .CBV_SRV_UAV, NumDescriptors = descriptor_count, Flags = {.SHADER_VISIBLE},
     }
 
-	hr := device->CreateDescriptorHeap(&heap_desc, d3d12.IDescriptorHeap_UUID, (^rawptr)(&descriptor_heap))
+	hr := device->CreateDescriptorHeap(&heap_desc, d3d12.IDescriptorHeap_UUID, (^rawptr)(&ctx.descriptor_heap))
 	utils.check(hr, "Failure: CreateDescriptorHeap() in rg_compile")
 	descriptor_size := device->GetDescriptorHandleIncrementSize(.CBV_SRV_UAV)
 
 	fmt.printfln("Created descriptor heap")
 
 	descriptor_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-	descriptor_heap->GetCPUDescriptorHandleForHeapStart(&descriptor_handle)
+	ctx.descriptor_heap->GetCPUDescriptorHandleForHeapStart(&descriptor_handle)
 
 	current_slot := u32(0)
 
 	for &resource, i in graph.resources {
+        count: u32
+        if resource.kind == .Buffer {
+            stride := u64(resource.element_stride)
+            if stride == 0 || resource.desc.Width % stride != 0 || resource.desc.Width / stride > u64(max(u32)) {
+                fmt.eprintfln("Invalid structured buffer layout for %s", resource.name)
+                return false
+            }
+            count = u32(resource.desc.Width / stride)
+        }
 		if resource_is_read_by_any(graph, u32(i)) {
 		    fmt.printfln("Init srv on slot %d for node [%s]", current_slot, resource.name)
-			if resource.name == "tlas" {
-			    init_tlas_srv(&resource, device, descriptor_handle)
-			} else {
-			    dimension: d3d12.SRV_DIMENSION
-				dimension = d3d12.SRV_DIMENSION.TEXTURE2D if resource.desc.Dimension == .TEXTURE2D else d3d12.SRV_DIMENSION.BUFFER
-				srv_desc := d3d12.SHADER_RESOURCE_VIEW_DESC {
-				    Format = resource.desc.Format,
-					ViewDimension = dimension,
-					Shader4ComponentMapping = d3d12.DEFAULT_SHADER_4_COMPONENT_MAPPING,
-				}
-				srv_desc.Texture2D.MostDetailedMip = 0
-				srv_desc.Texture2D.MipLevels = 0xFFFFFFFF
-				init_srv(&resource, device, &srv_desc, descriptor_handle)
-			}
+			switch resource.kind {
+            case .TLAS: init_tlas_srv(&resource, device, descriptor_handle)
+            case .Texture: init_srv(&resource, device, nil, descriptor_handle)
+            case .Buffer:
+                desc := d3d12.SHADER_RESOURCE_VIEW_DESC{ViewDimension = .BUFFER, Shader4ComponentMapping = d3d12.DEFAULT_SHADER_4_COMPONENT_MAPPING}
+                desc.Buffer = {NumElements = count, StructureByteStride = resource.element_stride}
+                init_srv(&resource, device, &desc, descriptor_handle)
+            case .BLAS:
+                fmt.eprintfln("Cannot create a BLAS SRV for %s", resource.name)
+                return false
+            }
 			descriptor_handle.ptr += uint(descriptor_size)
 			resource.srv_idx = current_slot
 			current_slot += 1
 		}
 		if resource_is_written_by_any(graph, u32(i)) {
 		    fmt.printfln("Init uav on slot %d for node [%s]", current_slot, resource.name)
-			{
-			    dimension: d3d12.UAV_DIMENSION
-			    dimension = d3d12.UAV_DIMENSION.TEXTURE2D if resource.desc.Dimension == .TEXTURE2D else d3d12.UAV_DIMENSION.BUFFER
-			    uav_desc := d3d12.UNORDERED_ACCESS_VIEW_DESC { Format = resource.desc.Format, ViewDimension = dimension }
-				init_uav(&resource, device, &uav_desc, descriptor_handle)
-			}
+			switch resource.kind {
+            case .Texture: init_uav(&resource, device, nil, descriptor_handle)
+            case .Buffer:
+                desc := d3d12.UNORDERED_ACCESS_VIEW_DESC{ViewDimension = .BUFFER}
+                desc.Buffer = {NumElements = count, StructureByteStride = resource.element_stride}
+                init_uav(&resource, device, &desc, descriptor_handle)
+            case .BLAS, .TLAS:
+                fmt.eprintfln("Cannot create an acceleration structure UAV for %s", resource.name)
+                return false
+            }
 			descriptor_handle.ptr += uint(descriptor_size)
 			resource.uav_idx = current_slot
 			current_slot += 1
@@ -250,7 +263,7 @@ rg_compile :: proc(graph: ^RenderGraph, ctx: ^D3D12Context) -> bool {
 	for pass_idx in graph.sorted_pass_ids {
 	    render_node := &graph.passes[pass_idx]
 		if render_node.init_callback != nil {
-		    render_node.init_callback(device, cmdlist, render_node)
+		    render_node.init_callback(render_node, ctx)
 		}
 	}
 
@@ -274,19 +287,22 @@ init_tlas_srv :: proc(resource_node: ^ResourceNode, device: ^d3d12.IDevice5, des
 }
 
 // Graph Execution
-rg_execute :: proc(rg: ^RenderGraph, cmd_list: ^d3d12.IGraphicsCommandList4, command_allocator: ^d3d12.ICommandAllocator) {
+rg_execute :: proc(rg: ^RenderGraph, ctx: ^D3D12Context) {
 
     // per frame, inside main_loop, replacing the rasterization draw block:
-    hr := command_allocator->Reset()
+    hr := ctx.cmd_allocator->Reset()
     utils.check(hr, "Failed resetting command allocator")
-    hr = cmd_list->Reset(command_allocator, nil)
+    hr = ctx.cmd_list->Reset(ctx.cmd_allocator, nil)
     utils.check(hr, "Failed resetting command list")
+        if ctx.descriptor_heap != nil {
+            ctx.cmd_list->SetDescriptorHeaps(1, &ctx.descriptor_heap)
+        }
 
 	for render_node_id in rg.sorted_pass_ids {
 		render_node := &rg.passes[render_node_id]
 		// In the callback, each node need to set its own pso and rs
 		if render_node.execute_callback != nil {
-		    render_node.execute_callback(render_node, rg, cmd_list)
+		    render_node.execute_callback(render_node, rg, ctx)
 		}
 	}
 }

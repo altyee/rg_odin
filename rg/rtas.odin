@@ -10,6 +10,7 @@ import dxgi "vendor:directx/dxgi"
 import d3d12ma "../d3d12ma"
 import "core:mem"
 
+/*
 build_blas_ctx :: proc(
     ctx: ^D3D12Context,
     // device: ^d3d12.IDevice5,
@@ -97,18 +98,21 @@ build_blas_ctx :: proc(
     return blas, true
 }
 
+*/
+
 build_blas :: proc(
-    device: ^d3d12.IDevice5,
+    ctx: ^D3D12Context,
     cmdlist: ^d3d12.IGraphicsCommandList4,
-    allocator: d3d12ma.Allocator,
-
-    vertex_buffer: ^d3d12.IResource,
+    vertices: d3d12ma.Allocation,
     vertex_count: u32,
-    index_buffer: ^d3d12.IResource,
+    indices: d3d12ma.Allocation,
     index_count: u32,
-
     pool: d3d12ma.Pool,
 ) -> (blas: d3d12ma.Allocation, ok: bool) {
+    device := ctx.device
+    allocator := ctx.allocator
+    vertex_buffer := d3d12ma.Allocation_GetD3D12Resource(vertices)
+    index_buffer := d3d12ma.Allocation_GetD3D12Resource(indices)
     geom_desc := d3d12.RAYTRACING_GEOMETRY_DESC{
         Type = .TRIANGLES,
         Flags = {.OPAQUE},
@@ -269,9 +273,8 @@ build_tlas :: proc(
       		CustomPool = nil,
       		pPrivateData = nil,
        	}
-        tlas := d3d12ma.Allocator_CreateResource(allocator, &alloc_desc, &desc, {.RAYTRACING_ACCELERATION_STRUCTURE}, nil, &tlas, d3d12.IResource_UUID, nil)
-        // hr := device->CreateCommittedResource(&heap_props, {}, &desc, {.RAYTRACING_ACCELERATION_STRUCTURE}, nil, d3d12.IResource_UUID, (^rawptr)(&tlas))
-        // if hr < 0 { return nil, false }
+        hr := d3d12ma.Allocator_CreateResource(allocator, &alloc_desc, &desc, {.RAYTRACING_ACCELERATION_STRUCTURE}, nil, &tlas, d3d12.IResource_UUID, nil)
+        if hr < 0 { return nil, false }
     }
 
     build_desc := d3d12.BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC{

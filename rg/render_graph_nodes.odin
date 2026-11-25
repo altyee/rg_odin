@@ -25,7 +25,9 @@ Resource_Desc :: struct {
 
 ResourceNode :: struct {
 	name: string,
-    desc: d3d12.RESOURCE_DESC, // Or a union of Texture/Buffer descs
+    	desc: d3d12.RESOURCE_DESC,
+        kind: ResourceKind,
+        element_stride: u32,
 
     // Graph Compiler Metadata:
     first_pass_id: i32,         // Index of the first pass that uses this
@@ -95,15 +97,16 @@ RenderNode :: struct {
     // PSO and RS
     pso: ^d3d12.IStateObject,
     // ps_rt: ^d3d12.IPipelineState,
+    sbt_buffer: d3d12ma.Allocation,
     sbt_regions: SBTRegions,
     root_signature: ^d3d12.IRootSignature,
 
     // Initialization Hook, compile shaders etc.
-    init_callback: proc(device: ^d3d12.IDevice5, cmd_list: ^d3d12.IGraphicsCommandList4, render_node: ^RenderNode),
+    init_callback: proc(^RenderNode, ^D3D12Context),
 
     // Execution Hook:
     // A procedure pointer that knows how to record the actual DX12 draw commands
-    execute_callback: proc(^RenderNode, ^RenderGraph, ^d3d12.IGraphicsCommandList4),
+    execute_callback: proc(^RenderNode, ^RenderGraph, ^D3D12Context),
 }
 
 // create_render_node :: proc() -> RenderNode {

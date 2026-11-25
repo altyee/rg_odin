@@ -20,37 +20,22 @@ Mesh :: struct {
 	uvs: []f32, // uv_stride = 2 * f32: uv0_x, uv0_y, uv1_x, uv1_y
 	indices: []u32,
 	color: [4]f32, // rgba colour defined in gltf
+	emission: [3]f32,
 	vertex_buffer: d3d12ma.Allocation,
 	index_buffer: d3d12ma.Allocation,
 }
 
 GeometryPool :: struct {
-    v: d3d12ma.Pool,
-    i: d3d12ma.Pool,
-    // n: d3d12ma.Pool,
-    // uv: d3d12ma.Pool,
+    upload: d3d12ma.Pool,
 }
 
 init_geometry_pool :: proc(allocator: d3d12ma.Allocator) -> (g_pool: GeometryPool) {
-    vertex_pool: d3d12ma.Pool
-    {
-        desc := d3d12ma.POOL_DESC{
-            HeapProperties = d3d12.HEAP_PROPERTIES {Type = .UPLOAD},
-            BlockSize = 64 * 1024 * 1024, // 64 MB chunks
-        }
-        d3d12ma.Allocator_CreatePool(allocator, &desc, &vertex_pool)
+    desc := d3d12ma.POOL_DESC{
+        HeapProperties = d3d12.HEAP_PROPERTIES {Type = .UPLOAD},
+        BlockSize = 64 * 1024 * 1024,
     }
-    index_pool: d3d12ma.Pool
-    {
-        desc := d3d12ma.POOL_DESC{
-            HeapProperties = d3d12.HEAP_PROPERTIES {Type = .UPLOAD},
-            BlockSize = 64 * 1024 * 1024, // 64 MB chunks
-        }
-        d3d12ma.Allocator_CreatePool(allocator, &desc, &index_pool)
-    }
-
-    g_pool.v = vertex_pool
-    g_pool.i = index_pool
+    hr := d3d12ma.Allocator_CreatePool(allocator, &desc, &g_pool.upload)
+    utils.check(hr, "Mesh: Failed creating geometry upload pool")
 
     return g_pool
 }
@@ -63,6 +48,7 @@ allocate_mesh :: proc(allocator: d3d12ma.Allocator, pool: ^GeometryPool, m: ^Mes
 	alloc_props := d3d12ma.ALLOCATION_DESC{
 		Flags = {},
 		HeapType = .UPLOAD,
+		CustomPool = pool.upload,
 		ExtraHeapFlags = {},
 		pPrivateData = nil,
 	}
@@ -80,7 +66,7 @@ allocate_mesh :: proc(allocator: d3d12ma.Allocator, pool: ^GeometryPool, m: ^Mes
 	}
 
 	res_desc.Width = v_size
-	alloc_props.CustomPool = pool.v
+
 	hr := d3d12ma.Allocator_CreateResource(
 		allocator,
 		&alloc_props,
@@ -94,7 +80,7 @@ allocate_mesh :: proc(allocator: d3d12ma.Allocator, pool: ^GeometryPool, m: ^Mes
 	utils.check(hr, "Mesh: Failed creating vertex buffer")
 
 	res_desc.Width = i_size
-	alloc_props.CustomPool = pool.i
+
 	hr = d3d12ma.Allocator_CreateResource(
 		allocator,
 		&alloc_props,
