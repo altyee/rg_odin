@@ -22,3 +22,6 @@ cd build
 # dlls should be here
 odin run ../rtsample
 ```
+
+<img width="540" height="540" alt="cornell_box" src="https://github.com/user-attachments/assets/16df81a6-0b2f-46fe-b216-00f7b9dddd40" />
+
