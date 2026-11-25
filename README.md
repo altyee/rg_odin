@@ -18,8 +18,7 @@ Requires ```dxil.dll``` ```dxcompiler.dll``` ```SDL3.dll```.
 
 ## Usage 
 ```
-mkdir build
-# dlls should be here
 cd build
+# dlls should be here
 odin run ../rtsample
 ```
